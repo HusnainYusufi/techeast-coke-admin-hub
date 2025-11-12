@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatsCard } from "@/components/dashboard/StatsCard";
-import { LogOut, Wrench, Package, BarChart3, Clock } from "lucide-react";
+import { LogOut, Wrench, Package, BarChart3, Clock, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getCokeAdminOverview } from "@/services/dashboard";
+import { getCokeAdminOverview, submitMaintenanceFeedback } from "@/services/dashboard";
 import { logout } from "@/services/authService";
 import {
   ResponsiveContainer,
@@ -16,12 +16,18 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  LineChart,
-  Line,
   PieChart,
   Pie,
   Cell,
 } from "recharts";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -29,6 +35,11 @@ export default function Dashboard() {
   const [overview, setOverview] = useState(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+
+  const [feedbackModal, setFeedbackModal] = useState(false);
+  const [selectedMaintenance, setSelectedMaintenance] = useState(null);
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -57,12 +68,47 @@ export default function Dashboard() {
     navigate("/auth");
   };
 
+  const openFeedbackModal = (maintenance) => {
+    setSelectedMaintenance(maintenance);
+    setFeedbackMessage("");
+    setFeedbackModal(true);
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!feedbackMessage.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Message Required",
+        description: "Please write your feedback before submitting.",
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await submitMaintenanceFeedback(selectedMaintenance._id, feedbackMessage);
+      toast({
+        title: "Feedback Sent",
+        description: res.message || "Your feedback has been submitted successfully.",
+      });
+      setFeedbackModal(false);
+      setFeedbackMessage("");
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "Failed to send feedback",
+        description: err.message || "Something went wrong.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const stats = overview?.stats?.totals || {};
   const monthlyData = overview?.stats?.maintenanceByMonth || [];
   const byNature = overview?.stats?.maintenanceByNature || {};
   const tableItems = overview?.maintenanceTable?.items || [];
 
-  // Prepare pie chart data
   const pieData = Object.keys(byNature).map((key) => ({
     name: key,
     value: byNature[key],
@@ -92,10 +138,10 @@ export default function Dashboard() {
       <main className="container mx-auto space-y-10 p-6">
         {/* Stats */}
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-          <StatsCard title="Sites" value={stats.sites || 0} icon={Package} />
-          <StatsCard title="Lifters" value={stats.lifters || 0} icon={BarChart3} />
-          <StatsCard title="Maintenance" value={stats.maintenance || 0} icon={Wrench} />
-          <StatsCard title="Breakdowns" value={stats.breakdowns || 0} icon={Clock} />
+          <StatsCard title="Sites" value={stats.sites || 0} icon={Package} change={""} trend={"up"} />
+          <StatsCard title="Lifters" value={stats.lifters || 0} icon={BarChart3} change={""} trend={"up"} />
+          <StatsCard title="Maintenance" value={stats.maintenance || 0} icon={Wrench} change={""} trend={"up"} />
+          <StatsCard title="Breakdowns" value={stats.breakdowns || 0} icon={Clock} change={""} trend={"up"} />
         </div>
 
         {/* Charts */}
@@ -114,14 +160,6 @@ export default function Dashboard() {
                     <Tooltip />
                     <Legend />
                     <Bar dataKey="count" fill="#2563eb" radius={[4, 4, 0, 0]} name="Total Maintenances" />
-                    <Line
-                      type="monotone"
-                      dataKey={() => parseFloat(overview.stats.avgDowntimeHrs)}
-                      name="Avg Downtime (hrs)"
-                      stroke="#10b981"
-                      strokeWidth={2.5}
-                      dot={false}
-                    />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -188,6 +226,7 @@ export default function Dashboard() {
                       <th className="px-3 py-2 border">Mechanic</th>
                       <th className="px-3 py-2 border">In Date</th>
                       <th className="px-3 py-2 border">Out Date</th>
+                      <th className="px-3 py-2 border text-center">Feedback</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -201,9 +240,7 @@ export default function Dashboard() {
                         <td className="px-3 py-2 border font-medium text-gray-900">
                           {item.srNumber}
                         </td>
-                        <td className="px-3 py-2 border">
-                          {item.liftId?.lifterNumber || "N/A"}
-                        </td>
+                        <td className="px-3 py-2 border">{item.liftId?.lifterNumber || "N/A"}</td>
                         <td className="px-3 py-2 border">
                           <span
                             className={`px-2 py-1 rounded-full text-xs font-semibold ${
@@ -217,17 +254,22 @@ export default function Dashboard() {
                             {item.natureOfRepair}
                           </span>
                         </td>
-                        <td className="px-3 py-2 border text-gray-700">
-                          {item.descriptionOfWork}
-                        </td>
-                        <td className="px-3 py-2 border text-gray-700">
-                          {item.mechanicName}
-                        </td>
+                        <td className="px-3 py-2 border text-gray-700">{item.descriptionOfWork}</td>
+                        <td className="px-3 py-2 border text-gray-700">{item.mechanicName}</td>
                         <td className="px-3 py-2 border">
                           {new Date(item.inDate).toLocaleDateString()}
                         </td>
                         <td className="px-3 py-2 border">
                           {new Date(item.outDate).toLocaleDateString()}
+                        </td>
+                        <td className="px-3 py-2 border text-center">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => openFeedbackModal(item)}
+                          >
+                            <MessageSquare className="h-4 w-4 mr-1" /> Feedback
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -238,10 +280,7 @@ export default function Dashboard() {
 
             {/* Pagination */}
             <div className="flex justify-between items-center mt-4">
-              <Button
-                disabled={page === 1}
-                onClick={() => setPage((p) => Math.max(p - 1, 1))}
-              >
+              <Button disabled={page === 1} onClick={() => setPage((p) => Math.max(p - 1, 1))}>
                 Previous
               </Button>
               <span className="text-sm text-muted-foreground">
@@ -252,6 +291,31 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Feedback Modal */}
+      <Dialog open={feedbackModal} onOpenChange={setFeedbackModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Feedback for {selectedMaintenance?.liftId?.lifterNumber || "Lifter"}
+            </DialogTitle>
+          </DialogHeader>
+          <Textarea
+            placeholder="Write your feedback..."
+            value={feedbackMessage}
+            onChange={(e) => setFeedbackMessage(e.target.value)}
+            className="min-h-[120px]"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFeedbackModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSubmitFeedback} disabled={submitting}>
+              {submitting ? "Sending..." : "Submit Feedback"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
